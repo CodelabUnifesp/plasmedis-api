@@ -5,14 +5,16 @@ from flask_migrate import Migrate
 from flask_cors import CORS, cross_origin
 import smtplib
 import random
-
-
+import jwt
+import datetime
+from functools import wraps
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"*": {"origins": "*"}})
 app.config['CORS_HEADERS'] = 'Content-Type'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URI', "postgres://jkpaprazxcpojo:2a135108dda110cdf26d9ef31fff1c6b9f94cd92993f25a90c3df353c685626d@ec2-52-45-179-101.compute-1.amazonaws.com:5432/d5bi00ifg35edj")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URI', "postgresql://jkpaprazxcpojo:2a135108dda110cdf26d9ef31fff1c6b9f94cd92993f25a90c3df353c685626d@ec2-52-45-179-101.compute-1.amazonaws.com:5432/d5bi00ifg35edj")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = os.environ.get('SECRETKEY', "N5Rc6dvl8giHxExSXQmJ")
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
@@ -144,12 +146,40 @@ class Form_Socioeconomico(db.Model):
         self.pessoa_amamenta = pessoa_amamenta
         self.preenchido = True
 
+def token_required(f):
+   @wraps(f)
+   def decorator(*args, **kwargs):
+        token = None
+        try:
+            token = request.headers['Authorization'].split("Bearer ")[1]
+        except:
+            return {'message': 'a valid token is missing'}
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms="HS256")
+        except:
+            return {'message': 'token is invalid'}
+        return f(*args, **kwargs)
+   return decorator
+
+def toDict(user: Usuario):
+    return {
+        "id": user.id,
+        "real_name": user.real_name,
+        "verificado": user.verificado,
+        "user_name": user.user_name,
+        "user_type": user.user_type,
+        "email": user.email
+    }
+
 @app.route('/')
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
 def hello():
 	return "This API Works! [" + os.environ.get("ENV", "DEV") + "]"
 
 @app.route('/users/<id>/notificacoes_conf', methods=['PUT', 'GET'])
+@cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def handle_user_notificacao(id):
     user_not = Notificacoes_Conf.query.filter_by(usuario=id).first()
 
@@ -179,6 +209,7 @@ def handle_user_notificacao(id):
 
 @app.route('/form_socio/<id>', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def form_socio(id):
     if request.method == 'POST':
         if request.is_json:
@@ -204,6 +235,7 @@ def form_socio(id):
 
 @app.route('/users', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def users():
     if request.method == 'POST':
         if request.is_json:
@@ -242,7 +274,9 @@ def login():
                 user = Usuario.query.filter_by(user_name=data['user_name']).first()
             if user:
                 if user.password == data['password']:
-                    return {"status": 1000, "type": str(user.user_type), "id": str(user.id), "verificado": str(user.verificado)} #Valido
+                    expiration = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+                    token = jwt.encode({'user': toDict(user), 'exp' : expiration}, app.config['SECRET_KEY'], algorithm="HS256")  
+                    return {"status": 1000, "type": str(user.user_type), "token": token, "verificado": str(user.verificado)} #Valido
                 else:
                     return {"status": 1010} #Invalido
             else:
@@ -253,6 +287,7 @@ def login():
 
 @app.route('/privileges', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def privileges():
     if request.method == 'POST':
         if request.is_json:
@@ -277,6 +312,7 @@ def privileges():
 
 @app.route('/bairros', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def bairros():
     if request.method == 'POST':
         if request.is_json:
@@ -302,6 +338,7 @@ def bairros():
 
 @app.route('/categorias', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def categorias():
     if request.method == 'POST':
         if request.is_json:
@@ -327,6 +364,7 @@ def categorias():
 
 @app.route('/users/<id>', methods=['GET', 'PUT', 'DELETE'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def handle_user(id):
     user = Usuario.query.get_or_404(id)
 
@@ -370,6 +408,7 @@ def handle_user(id):
 
 @app.route('/selo/<id>', methods=['PUT'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def selo(id):
     postagem = Postagem.query.get_or_404(id)
     if request.method == 'PUT':
@@ -383,6 +422,7 @@ def selo(id):
 
 @app.route('/postagens', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def postagens():
     if request.method == 'POST':
         if request.is_json:
@@ -417,6 +457,7 @@ def postagens():
 
 @app.route('/recomendados', methods=['GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def recomendados():
     if request.method == 'GET':
         postagens = Postagem.query.filter_by(selo=True).all()
@@ -429,6 +470,7 @@ def recomendados():
 
 @app.route('/postagens/<id_categoria>', methods=['GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def filtros(id_categoria):
     postagens = Postagem.query.join(Categoria, id_categoria == Postagem.categoria)
     print(postagens)
@@ -441,6 +483,7 @@ def filtros(id_categoria):
 
 @app.route('/lista_postagens/<id>', methods=['GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def lista_postagens(id):
     if request.method == 'GET':
         try :
@@ -457,6 +500,7 @@ def lista_postagens(id):
 
 @app.route('/comentarios', methods=['POST', 'GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def comentarios():
     if request.method == 'POST':
         if request.is_json:
@@ -485,6 +529,7 @@ def comentarios():
 
 @app.route('/comentarios/<postagem_id>', methods=['GET'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def comentarios_postagem(postagem_id):
     if request.method == 'GET':
         comments = Comentario.query.filter_by(postagem=postagem_id).all()
@@ -506,6 +551,7 @@ def comentarios_postagem(postagem_id):
 
 @app.route('/esqueci_senha', methods=['Get', 'Post'])
 @cross_origin(origin='*', headers=['Content-Type', 'Authorization'])
+@token_required
 def esqueci_senha():
      if request.method == 'POST':
         if request.is_json:
